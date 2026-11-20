@@ -432,6 +432,8 @@ async def voice_ws(ws: WebSocket, session_id: str):
     turn_task: Optional[asyncio.Task] = None
     partial_task: Optional[asyncio.Task] = None
     turn_active = False
+    bin_count = 0
+    bin_bytes = 0
 
     async def send_event(event: dict) -> None:
         if event.get("type") == "audio" and event.get("pcm"):
@@ -470,6 +472,7 @@ async def voice_ws(ws: WebSocket, session_id: str):
         data = bytes(buffer)
         buffer = bytearray()
         speech_end = speech_end_override or now_ms()
+        log.info("ws %s end_turn bytes=%d speech_end=%.0f", session_id, len(data), speech_end)
         await ws.send_json({"type": "speech_end", "t": speech_end, "bytes": len(data)})
         try:
             async for event in st.runner.run_voice(
@@ -492,6 +495,10 @@ async def voice_ws(ws: WebSocket, session_id: str):
                 break
             if message.get("bytes") is not None:
                 chunk = message["bytes"]
+                bin_count += 1
+                bin_bytes += len(chunk)
+                if bin_count % 50 == 1:
+                    log.info("ws %s binary #%d bytes=%d total=%d turn_active=%s speaking=%s", session_id, bin_count, len(chunk), bin_bytes, turn_active, speaking)
                 if not turn_active:
                     buffer.extend(chunk)
                     events = vad.push(chunk)
@@ -528,6 +535,7 @@ async def voice_ws(ws: WebSocket, session_id: str):
                 await ws.send_json({"type": "ready", "book_id": book_id, "sample_rate": sample_rate, "warm": st.warm, "warmup": warmup, "vad": vad_mode})
             elif kind == "vad":
                 event = msg.get("event")
+                log.info("ws %s vad event=%s speaking=%s turn_active=%s buffer=%d", session_id, event, speaking, turn_active, len(buffer))
                 if event == "speech_start" and not speaking and not turn_active:
                     speaking = True
                     await ws.send_json({"type": "speech_start", "t": now_ms()})

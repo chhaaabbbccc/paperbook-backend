@@ -59,6 +59,7 @@
       <button id="holdBtn" class="secondary" disabled style="flex:1; min-height:56px">按住说话 / 松开回答</button>
     </div>
     <div id="meter" style="margin-top:10px"><div id="meterFill"></div></div>
+    <div id="micInfo" class="kv">麦克风：未开始</div>
     <div class="hint">请用 http://127.0.0.1:8790/test 打开（麦克风需要安全上下文）。首次连接会预热/加载模型，请先点一次“文字问一句”或等 ready。</div>
   </div>
 
@@ -115,6 +116,10 @@
     lastFiller: false,
     pendingUserBubble: null,
     pendingAssistantBubble: null,
+    vad: { noise: 0.004, speechMs: 0, silenceMs: 0, started: false, frames: 0 },
+    micFrames: 0,
+    micBytes: 0,
+    micRms: 0,
   };
 
   function log(msg, cls='') {
@@ -201,6 +206,43 @@
     if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify({type:'barge_in'}));
   }
 
+  function clientVad(rms, frameMs) {
+    if (state.mode !== 'auto' || state.turnBusy) return;
+    const v = state.vad;
+    v.frames++;
+    if (v.frames < 8) v.noise = v.noise * 0.7 + Math.min(rms, 0.01) * 0.3;
+    const threshold = Math.max(0.006, Math.min(0.03, v.noise * 3.0));
+    const isSpeech = rms >= threshold;
+    if (!v.started) {
+      if (isSpeech) {
+        v.speechMs += frameMs;
+        if (v.speechMs >= 120) {
+          v.started = true; v.silenceMs = 0;
+          if (!state.turnBusy) { bargeIn(); state.firstAudioAt = 0; state.segs = 0; showLatency(null); }
+          state.ws.send(JSON.stringify({type:'vad', event:'speech_start'}));
+          setStatus('正在听…', 'rec');
+          log('client speech_start rms=' + rms.toFixed(4));
+        }
+      } else {
+        v.speechMs = 0;
+        v.noise = v.noise * 0.95 + Math.min(rms, 0.01) * 0.05;
+      }
+    } else {
+      if (isSpeech) { v.silenceMs = 0; }
+      else {
+        v.silenceMs += frameMs;
+        if (v.silenceMs >= 500) {
+          v.started = false; v.speechMs = 0; v.silenceMs = 0;
+          const t = Date.now();
+          state.speechEnd = performance.now();
+          state.ws.send(JSON.stringify({type:'vad', event:'speech_end', t}));
+          setStatus('思考中…', 'busy');
+          log('client speech_end');
+        }
+      }
+    }
+  }
+
   async function startMic() {
     state.stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
@@ -216,7 +258,8 @@
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
-      $('meterFill').style.width = Math.min(100, rms * 600) + '%';
+      state.micRms = rms;
+      $('meterFill').style.width = Math.min(100, rms * 800) + '%';
       const target = 16000;
       const ratio = state.ctx.sampleRate / target;
       const outLen = Math.floor(input.length / ratio);
@@ -227,22 +270,30 @@
         pcm[i] = v < 0 ? v * 32768 : v * 32767;
       }
       state.ws.send(pcm.buffer);
+      state.micFrames++; state.micBytes += pcm.byteLength;
+      if (state.micFrames % 10 === 0) {
+        log('mic rms=' + rms.toFixed(4) + ' frames=' + state.micFrames + ' bytes=' + state.micBytes);
+        $('micInfo').textContent = '麦克风：rms=' + rms.toFixed(4) + ' · frames=' + state.micFrames + ' · bytes=' + state.micBytes;
+      }
+      clientVad(rms, input.length / state.ctx.sampleRate * 1000);
     };
     state.source.connect(state.node);
     state.node.connect(state.ctx.destination);
     log('mic started @' + state.ctx.sampleRate + 'Hz → 16k PCM');
+    $('micInfo').textContent = '麦克风：已开始 @' + state.ctx.sampleRate + 'Hz，等待说话…';
   }
 
   function sendStart() {
     const book = $('book').value || 'cn01';
     const page = parseInt($('page').value || '1', 10);
     state.mode = $('mode').value;
+    state.vad = { noise: 0.004, speechMs: 0, silenceMs: 0, started: false, frames: 0 };
     state.ws.send(JSON.stringify({
       type: 'start',
       book_id: book,
       page,
       sample_rate: 16000,
-      vad: state.mode === 'push' ? 'client' : 'both',
+      vad: 'client',
       warmup: false
     }));
   }
