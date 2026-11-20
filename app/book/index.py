@@ -302,7 +302,7 @@ def route_intent(
         quoted = re.search(r"[“\"「']([^”\"」']+)[”\"」']", q)
         needle = quoted.group(1) if quoted else re.sub(r"^(查找文字|查找|高亮文字|高亮|find the text|highlight)\s*", "", q, flags=re.I).strip()
         needle = re.sub(r"(这)?(几)?个字.*$", "", needle).strip()
-        needle = re.sub(r"^(文字|单词)\s*", "", needle, flags=re.I).strip("“”\"' ?？。.!！")
+        needle = re.sub(r"^(文字|单词)\s*", "", needle, flags=re.I).strip("“”\"' ?？。.!！，,、；;：:")
         hits = book.find_text(needle)
         if hits:
             action = {"type": "highlight_text", "text": needle, "page": hits[0]["page"], "bbox": hits[0]["bbox"], "hits": hits[:8]}
