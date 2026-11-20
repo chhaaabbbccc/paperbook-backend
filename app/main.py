@@ -12,7 +12,7 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .book.ingest import ingest_materials_zip, ingest_pdf, list_books
 from .book.index import BookIndex
@@ -144,6 +144,16 @@ async def on_shutdown() -> None:
         await state.tts.close()
         await state.llm.close()
         state.store.close()
+
+
+# ── 最小测试网页 ───────────────────────────────────────────────────
+@app.get("/test", response_class=HTMLResponse)
+@app.get("/demo", response_class=HTMLResponse)
+async def demo_page():
+    path = Path(__file__).resolve().parent.parent / "web" / "index.html"
+    if not path.is_file():
+        return HTMLResponse("<h1>web/index.html not found</h1>", status_code=404)
+    return HTMLResponse(path.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
 
 # ── 健康 / 状态 ──────────────────────────────────────────────────────
