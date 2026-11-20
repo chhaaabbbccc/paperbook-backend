@@ -353,7 +353,9 @@
       return;
     }
     if (t === 'speech_start') {
-      if (!state.turnBusy) { bargeIn(); state.firstAudioAt = 0; state.segs = 0; showLatency(null); }
+      // 客户端 VAD/按住说话已经在本地 barge-in 过；这里只重置显示，
+      // 不能再发 barge_in，否则会把服务端正在录的 buffer 清掉。
+      state.firstAudioAt = 0; state.segs = 0; showLatency(null);
       setStatus('正在听…', 'rec');
       return;
     }

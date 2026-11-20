@@ -471,6 +471,10 @@ async def voice_ws(ws: WebSocket, session_id: str):
             return
         data = bytes(buffer)
         buffer = bytearray()
+        if len(data) < 3200:
+            log.info("ws %s end_turn skipped: %d bytes < 100ms", session_id, len(data))
+            turn_active = False
+            return
         speech_end = speech_end_override or now_ms()
         log.info("ws %s end_turn bytes=%d speech_end=%.0f", session_id, len(data), speech_end)
         await ws.send_json({"type": "speech_end", "t": speech_end, "bytes": len(data)})
@@ -501,7 +505,8 @@ async def voice_ws(ws: WebSocket, session_id: str):
                     log.info("ws %s binary #%d bytes=%d total=%d turn_active=%s speaking=%s", session_id, bin_count, len(chunk), bin_bytes, turn_active, speaking)
                 if not turn_active:
                     buffer.extend(chunk)
-                    events = vad.push(chunk)
+                    # client 模式：客户端 VAD 是权威，服务端不再自行判停/截断 buffer
+                    events = [] if vad_mode == "client" else vad.push(chunk)
                     for ev in events:
                         if ev.kind == "speech_start" and not speaking:
                             speaking = True
@@ -541,8 +546,13 @@ async def voice_ws(ws: WebSocket, session_id: str):
                     await ws.send_json({"type": "speech_start", "t": now_ms()})
                     if st.settings.asr_partial_ms > 0:
                         partial_task = asyncio.create_task(partial_loop())
-                elif event == "speech_end" and speaking and not turn_active:
-                    await end_turn(msg.get("t") or now_ms())
+                elif event == "speech_end" and not turn_active:
+                    # 客户端 VAD 模式下客户端是权威：只要 buffer 里有足够音频就应答，
+                    # 不依赖 speaking 标志（防止 barge-in/回声把状态清掉后丢回合）。
+                    if speaking or len(buffer) >= 3200:
+                        await end_turn(msg.get("t") or now_ms())
+                    else:
+                        log.info("ws %s speech_end ignored: buffer=%d too short", session_id, len(buffer))
             elif kind == "text":
                 text = str(msg.get("text") or "").strip()
                 if text and book and not turn_active:
