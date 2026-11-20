@@ -16,7 +16,7 @@ from typing import AsyncIterator, Optional
 
 from ..config import Settings
 from ..providers.base import ASRProvider, LLMProvider, TTSProvider
-from ..utils import detect_lang, now_ms, truncate
+from ..utils import detect_lang, now_ms, pcm_duration_ms, truncate
 from ..book.index import BookIndex, route_intent
 from ..book.store import Store
 from .filler import FillerBank
@@ -137,6 +137,12 @@ class VoiceTurnRunner:
             yield {"type": "error", "stage": "asr", "message": str(exc)}
             return
         if not result.text.strip():
+            dur_ms = pcm_duration_ms(pcm, sample_rate)
+            hint = (
+                "只录到很短的声音，可能被浏览器降噪截断了。请改用“按住说话”、关闭降噪，或提高增益/靠近麦克风。"
+                if dur_ms < 500
+                else "我没有听清，可以再说一遍吗？"
+            )
             yield {
                 "type": "asr_final",
                 "text": "",
@@ -144,7 +150,7 @@ class VoiceTurnRunner:
                 "ms": round(asr_ms, 1),
                 "trim": [round(trim_start, 1), round(trim_end, 1)],
             }
-            yield {"type": "answer", "text": "我没有听清，可以再说一遍吗？", "lang": language or "zh"}
+            yield {"type": "answer", "text": hint, "lang": language or "zh"}
             return
         yield {
             "type": "asr_final",

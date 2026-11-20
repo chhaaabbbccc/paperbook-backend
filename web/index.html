@@ -45,8 +45,8 @@
       <label>页码</label><input id="page" type="number" min="1" value="1" style="width:70px" />
       <label>模式</label>
       <select id="mode">
-        <option value="auto">自动 VAD（说完自动回答，约多 0.5s 判停）</option>
-        <option value="push">按住说话（松开即回答，延迟更准）</option>
+        <option value="auto">自动 VAD（免提，说完自动回答）</option>
+        <option value="push" selected>按住说话（推荐，松开即回答）</option>
       </select>
     </div>
     <div class="row" style="margin-top:10px">
@@ -55,6 +55,7 @@
       <label>VAD 灵敏度 <b id="sensVal">3</b></label>
       <input id="sens" type="range" min="1" max="10" step="1" value="3" style="width:110px" />
       <button id="selftestBtn" class="secondary">用测试音频当我说</button>
+      <label><input type="checkbox" id="procToggle" /> 开启浏览器降噪/回声消除</label>
     </div>
     <div class="row" style="margin-top:10px">
       <button id="connectBtn">连接并开始</button>
@@ -256,7 +257,7 @@
 
   async function startMic() {
     state.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      audio: { channelCount: 1, echoCancellation: $('procToggle').checked, noiseSuppression: $('procToggle').checked, autoGainControl: true }
     });
     state.ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (state.ctx.state === 'suspended') await state.ctx.resume();
@@ -483,6 +484,11 @@
     }
   }
 
+  $('procToggle').onchange = async () => {
+    if (!state.connected) return;
+    try { if (state.node) state.node.disconnect(); if (state.source) state.source.disconnect(); if (state.stream) state.stream.getTracks().forEach(t=>t.stop()); if (state.ctx) state.ctx.close(); } catch {}
+    await startMic();
+  };
   $('gain').oninput = () => { state.gain = parseFloat($('gain').value); $('gainVal').textContent = state.gain; };
   $('sens').oninput = () => { state.sens = parseFloat($('sens').value); $('sensVal').textContent = state.sens; };
   $('selftestBtn').onclick = async () => {
