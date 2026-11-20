@@ -102,6 +102,7 @@ class VoiceTurnRunner:
         llm: LLMProvider,
         filler: FillerBank,
         store: Store,
+        chitchat_cache=None,
     ) -> None:
         self.settings = settings
         self.asr = asr
@@ -109,6 +110,7 @@ class VoiceTurnRunner:
         self.llm = llm
         self.filler = filler
         self.store = store
+        self.chitchat_cache = chitchat_cache
 
     async def run_voice(
         self,
@@ -288,7 +290,18 @@ class VoiceTurnRunner:
         async def answer_task() -> None:
             try:
                 timeline.mark("llm_start", now_ms())
-                if intent.get("answer"):
+                cached = None
+                if intent.get("intent") == "chitchat" and self.chitchat_cache is not None:
+                    cached = self.chitchat_cache.lookup(query)
+                if cached:
+                    # 预热缓存命中：LLM 真答案 + 预合成音频，直接整段入 TTS 队列旁路
+                    state["llm_first_token"] = now_ms()
+                    timeline.mark("llm_first_token", state["llm_first_token"])
+                    await emit({"type": "answer_delta", "text": cached["text"]})
+                    state["answer"] = cached["text"]
+                    state["cached_audio"] = cached
+                    await clause_queue.put(None)
+                elif intent.get("answer"):
                     text = intent["answer"]
                     await emit({"type": "answer_delta", "text": text})
                     for clause in splitter.feed(text):
@@ -390,6 +403,27 @@ class VoiceTurnRunner:
                 while True:
                     clause = await clause_queue.get()
                     if clause is None:
+                        # 缓存命中：直接播预合成音频（0ms 合成）
+                        cached = state.get("cached_audio")
+                        if cached and not state["cancelled"]:
+                            seq = state["audio_seq"]
+                            state["audio_seq"] += 1
+                            rate = cached["rate"]
+                            self.tts.sample_rate = rate
+                            if state["tts_first_chunk"] is None:
+                                state["tts_first_chunk"] = now_ms()
+                                timeline.mark("tts_start", state["tts_first_chunk"])
+                            await emit({"type": "audio_start", "seq": seq, "sample_rate": rate, "format": "pcm16", "text": cached["text"]})
+                            if not state["first_audio"]:
+                                state["first_audio"] = True
+                                timeline.mark("first_audio", now_ms())
+                            step = max(2, int(rate * 0.1) * 2)
+                            pcm = cached["pcm"]
+                            for i in range(0, len(pcm), step):
+                                piece = pcm[i : i + step]
+                                if piece:
+                                    await emit({"type": "audio", "seq": seq, "pcm": piece})
+                            await emit({"type": "audio_end", "seq": seq})
                         break
                     if state["cancelled"]:
                         continue

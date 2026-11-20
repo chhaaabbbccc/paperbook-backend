@@ -40,7 +40,9 @@ class AppState:
         self.tts: TTSProvider = build_tts(cfg)
         self.llm: LLMProvider = build_llm(cfg)
         self.filler = FillerBank(cfg)
-        self.runner = VoiceTurnRunner(cfg, self.asr, self.tts, self.llm, self.filler, self.store)
+        from .pipeline.chitchat_cache import ChitchatCache
+        self.chitchat_cache = ChitchatCache(cfg)
+        self.runner = VoiceTurnRunner(cfg, self.asr, self.tts, self.llm, self.filler, self.store, chitchat_cache=self.chitchat_cache)
         self.books: dict[str, BookIndex] = {}
         self.videos: dict[str, VideoIndex] = {}
         self.warm = False
@@ -93,6 +95,8 @@ class AppState:
                 await self.llm.warmup()
             except Exception as exc:  # noqa: BLE001
                 errors.append(f"llm: {exc}")
+            # 闲聊缓存后台生成，不阻塞 warm 状态（生成期间未命中走 LLM 流式）
+            asyncio.create_task(self.chitchat_cache.prepare(self.llm, self.tts))
             self.warm = True
             self.warmup_error = "; ".join(errors)
             return {"ok": not errors, "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1), "errors": errors, "filler": self.filler.status()}
@@ -180,6 +184,7 @@ async def health():
         "tts": st.tts.status(),
         "llm": st.llm.status(),
         "filler": st.filler.status(),
+        "chitchat_cache": st.chitchat_cache.status(),
         "latency_budget_ms": st.settings.latency_budget_ms,
     }
 

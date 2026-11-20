@@ -141,6 +141,7 @@ class Settings:
     session_history_turns: int = field(default_factory=lambda: _i("SESSION_HISTORY_TURNS", 8))
     moderation_enabled: bool = field(default_factory=lambda: _b("MODERATION_ENABLED", True))
     fast_answer: bool = field(default_factory=lambda: _b("FAST_ANSWER", False))
+    chitchat_cache: bool = field(default_factory=lambda: _b("CHITCHAT_CACHE", True))
 
     @property
     def books_dir(self) -> Path:
