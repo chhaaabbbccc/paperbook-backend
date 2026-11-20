@@ -84,6 +84,9 @@ def compose_extractive(query: str, passages: list[dict], lang: str = "zh", curre
         return "这本绘本里没有找到相关的内容。" if lang == "zh" else "I couldn't find that in this picture book."
     qn = normalize_text(query)
     wants_cause = any(w in qn for w in ("为什么", "为何", "怎么会", "why", "how come"))
+    wants_sad = any(w in qn for w in ("难过", "伤心", "不开心", "不高兴", "sad", "cry"))
+    wants_happy = any(w in qn for w in ("开心", "高兴", "快乐", "happy"))
+    wants_angry = any(w in qn for w in ("生气", "愤怒", "angry"))
     wants_color = any(w in qn for w in ("颜色", "什么色", "colour", "color"))
     wants_count = any(w in qn for w in ("几个", "多少", "几块", "how many"))
     asks_quote = any(w in qn for w in ("说什么", "说了什么", "what did"))
@@ -104,12 +107,31 @@ def compose_extractive(query: str, passages: list[dict], lang: str = "zh", curre
             sl = sent.lower()
             if wants_cause and any(w in sl for w in _CAUSAL):
                 score += 1.5
+            if wants_sad:
+                if any(w in sl for w in ("不开心", "难过", "伤心", "哭")):
+                    score += 2.0
+                if "好开心" in sl or "很高兴" in sl or "生日快乐" in sl:
+                    score -= 2.5
+            if wants_happy:
+                if any(w in sl for w in ("开心", "高兴", "快乐")):
+                    score += 1.5
+                if "不开心" in sl or "难过" in sl:
+                    score -= 2.5
+            if wants_angry:
+                if any(w in sl for w in ("生气", "都怪你")):
+                    score += 1.5
+                if "不生气" in sl:
+                    score -= 2.5
             if wants_color and any(w in sl for w in _COLOR):
                 score += 0.9
             if wants_count:
                 score += 0.15 * sum(1 for w in _COUNT if w in sl)
             if "倒" in qn and ("没有倒" in sl or "不倒" in sl):
                 score -= 2.5
+            if "倒" in qn and ("一倒" in sl or "倒了" in sl or "倒一地" in sl):
+                score += 1.2
+            if ("晃" in qn or "why" in qn) and ("放上" in sl or "放在" in sl):
+                score += 0.8
             if "生气" in qn and "不生气" in sl:
                 score -= 2.0
             if sent.endswith(("？", "?")) and not asks_quote:
@@ -134,7 +156,7 @@ def compose_extractive(query: str, passages: list[dict], lang: str = "zh", curre
                 best_score, best = score, sent
                 break
     # why 问句：若最佳句不是原因句，尝试拼上同一页里下一句的因果/动作句
-    if wants_cause and not any(w in best.lower() for w in _CAUSAL):
+    if (wants_cause or wants_sad or wants_angry) and not any(w in best.lower() for w in _CAUSAL):
         try:
             idx = sentences.index(best)
         except ValueError:
@@ -144,7 +166,8 @@ def compose_extractive(query: str, passages: list[dict], lang: str = "zh", curre
                 idx = -1
         if 0 <= idx < len(sentences) - 1:
             nxt = sentences[idx + 1].strip().strip("“”\"'")
-            if nxt and not nxt.endswith(("？", "?")) and len(best) + len(nxt) < 100:
+            counting = nxt.count("块、") >= 2 or nxt.count("、") >= 4
+            if nxt and not nxt.endswith(("？", "?")) and not counting and len(best) + len(nxt) < 100:
                 best = best + nxt
     answer = best.strip()
     if len(answer) > 110:
