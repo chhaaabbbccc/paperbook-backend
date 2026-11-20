@@ -389,6 +389,15 @@ def route_intent(
         hits = book.search(expand_query(word or q, book_lang), k=3, prefer_page=current_page)
         return {"intent": "definition", "word": word, "passages": hits, "lang": lang, "evidence": hits[:2]}
 
+    # 闲聊/测试类问题（与绘本无关）：交给大模型实时回答，不硬检索绘本
+    chitchat = re.search(
+        r"有声音|听得[见清]|听得到|在吗|你好|您好|hello|hi|测试|麦克风|话筒|喇叭|音箱|"
+        r"你是谁|你叫什么|讲个笑话|天气|几点|谢谢|thank",
+        q, re.I,
+    )
+    if chitchat and not re.search(r"画面|查找|高亮|播放|暂停|继续", q):
+        return {"intent": "chitchat", "passages": [], "lang": lang, "evidence": []}
+
     hits = book.search(expanded, k=6, prefer_page=current_page)
     if current_page:
         page = book.page(current_page)

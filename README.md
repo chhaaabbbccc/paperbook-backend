@@ -199,7 +199,7 @@ python tools/eval_queries.py --book cn01 --base http://127.0.0.1:8790 --limit 50
 
 - **英文绘本是扫描页**：文字层只有赛事水印，入库靠 RapidOCR；插图页没有文字，脚本里的“找到某个画面”只能靠页序/关键词近似，建议视频组用 `manifest` 精确覆盖场景与元素 bbox。
 - **本地 SAPI 音色**是系统音色，适合联调/兜底；正式演示切 MiniMax 或 CosyVoice。
-- **提取式 LLM 兜底**只能摘抄原文，复杂“为什么/跨语言”问题需要接 DeepSeek/官方模型；接口已就绪，填 key 即切换。
+- **LLM 已接 MiniMax**（`MiniMax-M2.7-highspeed`，首 token ~0.7s），回答实时生成；提取式仅作断网兜底。也可换 DeepSeek/官方模型，填 key 即切换。
 - **MiniMax ASR** 已实测（`asr-1.0`，0.4–0.7s，中英混说可用）；专有名词偶尔会错（如 Xiao Man→Yao Man），脚本页对齐能兜住导航，但内容问答若强调人名，建议切回本地 large-v3 + 热词。
 - **MiniMax 音色克隆**：本账号 `voice_clone` 返回 `2038 voice clone user forbidden`，需要账号开通/实名或企业权限；系统 327 个音色、`timbre_weights`、情绪/语速/音高都可正常用。
 - **CLIP 视觉场景匹配**尝试过，但本机 HF 网络不可达，未启用；后续可离线装 CLIP 提升英文绘本的场景定位。

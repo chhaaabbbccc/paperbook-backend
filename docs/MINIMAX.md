@@ -169,3 +169,29 @@ ASR_PROVIDER=local     # 本地 large-v3 + 本书热词，专名更准
 - `tools/minimax_probe.py` 只打印打码后的 key，不写入结果文件。
 - 如果 key 曾在聊天/群里出现过，赛后可到 MiniMax 控制台轮换。
 - 克隆音色需要授权/同意；不要克隆真实儿童或赛事素材中的声音。
+
+## 8. LLM 实时回答（已实测）
+
+同一个 key 也能调文本模型（`/v1/models` 可列当前可用模型）：
+
+| 模型 | 首 token（绘本问题） | 说明 |
+| --- | --- | --- |
+| `MiniMax-M2.7-highspeed` | **~0.7s** | 推荐；thinking 在 content 里，后端已过滤 |
+| `MiniMax-M3.1-Flash` | 1.4–1.7s | 强制 adaptive thinking，不能关；首 token 慢 |
+| `MiniMax-M3` | ~0.5s（短问） | 长上下文时 thinking 变长 |
+
+配置：
+
+```ini
+LLM_PROVIDER=openai
+LLM_BASE_URL=https://api.minimaxi.com/v1
+LLM_API_KEY=<same key>
+LLM_MODEL=MiniMax-M2.7-highspeed
+LLM_MAX_TOKENS=512
+```
+
+- 旧模型名（M2/M2.1/abab6.5s/Text-01）已下线，返回 2069。
+- `thinking.type=disabled` / `reasoning_effort=none` 在 M3 系列返回 400；M2.7 用 `enable_thinking:false` 可省部分延迟。
+- 后端对 content 内的 `...` 块做了流式过滤，只把正式回答送 TTS。
+- 闲聊/测试类问题（“我说话有声音吗”“你好”）走 chitchat 路由，由 LLM 实时回答，不硬检索绘本。
+- 端到端（WS，含 ASR+LLM+TTS）：导航类 ~0.9–1.4s；内容类 ~1.2–1.7s；慢 LLM 时 1.7s 填充音兜底，全部 <2s。

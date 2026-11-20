@@ -269,8 +269,10 @@
         const v = Math.max(-1, Math.min(1, input[idx]));
         pcm[i] = v < 0 ? v * 32768 : v * 32767;
       }
-      state.ws.send(pcm.buffer);
-      state.micFrames++; state.micBytes += pcm.byteLength;
+      // 只在“正在说话”时上传音频，避免把静音前缀送进 ASR
+      const speakingNow = state.mode === 'push' ? state.holdActive : state.vad.started;
+      if (speakingNow) { state.ws.send(pcm.buffer); state.micBytes += pcm.byteLength; }
+      state.micFrames++;
       if (state.micFrames % 10 === 0) {
         log('mic rms=' + rms.toFixed(4) + ' frames=' + state.micFrames + ' bytes=' + state.micBytes);
         $('micInfo').textContent = '麦克风：rms=' + rms.toFixed(4) + ' · frames=' + state.micFrames + ' · bytes=' + state.micBytes;
