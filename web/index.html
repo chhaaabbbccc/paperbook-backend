@@ -50,6 +50,13 @@
       </select>
     </div>
     <div class="row" style="margin-top:10px">
+      <label>麦克风增益 <b id="gainVal">8</b>x</label>
+      <input id="gain" type="range" min="1" max="20" step="1" value="8" style="width:140px" />
+      <label>VAD 灵敏度 <b id="sensVal">3</b></label>
+      <input id="sens" type="range" min="1" max="10" step="1" value="3" style="width:110px" />
+      <button id="selftestBtn" class="secondary">用测试音频当我说</button>
+    </div>
+    <div class="row" style="margin-top:10px">
       <button id="connectBtn">连接并开始</button>
       <button id="stopBtn" class="secondary" disabled>停止</button>
       <button id="textBtn" class="secondary">文字问一句</button>
@@ -120,6 +127,8 @@
     micFrames: 0,
     micBytes: 0,
     micRms: 0,
+    gain: 8,
+    sens: 3,
   };
 
   function log(msg, cls='') {
@@ -211,7 +220,9 @@
     const v = state.vad;
     v.frames++;
     if (v.frames < 8) v.noise = v.noise * 0.7 + Math.min(rms, 0.01) * 0.3;
-    const threshold = Math.max(0.006, Math.min(0.03, v.noise * 3.0));
+    const sensFactor = 4.5 - state.sens * 0.35; // 灵敏度越高阈值越低
+    const floor = 0.012 / state.sens;
+    const threshold = Math.max(floor, Math.min(0.05, v.noise * sensFactor));
     const isSpeech = rms >= threshold;
     if (!v.started) {
       if (isSpeech) {
@@ -254,7 +265,9 @@
     state.node = state.ctx.createScriptProcessor(bufSize, 1, 1);
     state.node.onaudioprocess = (ev) => {
       if (!state.ws || state.ws.readyState !== WebSocket.OPEN || !state.ready) return;
-      const input = ev.inputBuffer.getChannelData(0);
+      const raw = ev.inputBuffer.getChannelData(0);
+      const input = new Float32Array(raw.length);
+      for (let i = 0; i < raw.length; i++) input[i] = Math.max(-1, Math.min(1, raw[i] * state.gain));
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
@@ -470,6 +483,39 @@
     }
   }
 
+  $('gain').oninput = () => { state.gain = parseFloat($('gain').value); $('gainVal').textContent = state.gain; };
+  $('sens').oninput = () => { state.sens = parseFloat($('sens').value); $('sensVal').textContent = state.sens; };
+  $('selftestBtn').onclick = async () => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN || !state.ready) { log('先点“连接并开始”'); return; }
+    const book = $('book').value || 'cn01';
+    try {
+      const r = await fetch(`/api/books/${book}/queries/06.wav`);
+      if (!r.ok) { log('selftest: 无测试音频'); return; }
+      const buf = await r.arrayBuffer();
+      const dv = new DataView(buf);
+      // 解析 wav，取 16k mono PCM16
+      let off = 12, rate = 16000, dataOff = 44, dataLen = buf.byteLength - 44;
+      while (off + 8 < buf.byteLength) {
+        const id = String.fromCharCode(dv.getUint8(off), dv.getUint8(off+1), dv.getUint8(off+2), dv.getUint8(off+3));
+        const sz = dv.getUint32(off+4, true);
+        if (id === 'fmt ') rate = dv.getUint32(off+12, true);
+        if (id === 'data') { dataOff = off+8; dataLen = sz; break; }
+        off += 8 + sz;
+      }
+      const pcm = new Uint8Array(buf, dataOff, dataLen);
+      bargeIn();
+      state.firstAudioAt = 0; state.segs = 0; showLatency(null);
+      state.ws.send(JSON.stringify({type:'vad', event:'speech_start'}));
+      const step = 640;
+      for (let i = 0; i < pcm.length; i += step) {
+        state.ws.send(pcm.slice(i, i+step));
+        await new Promise(res => setTimeout(res, 20));
+      }
+      state.speechEnd = performance.now();
+      state.ws.send(JSON.stringify({type:'vad', event:'speech_end', t: Date.now()}));
+      log('selftest: 已注入测试音频');
+    } catch (e) { log('selftest failed: ' + e); }
+  };
   $('connectBtn').onclick = connect;
   $('stopBtn').onclick = disconnect;
   $('textBtn').onclick = sendText;

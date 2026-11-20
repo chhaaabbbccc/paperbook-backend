@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import numpy as np
 import re
 import time
 from typing import AsyncIterator, Optional
@@ -120,6 +121,13 @@ class VoiceTurnRunner:
     ) -> AsyncIterator[dict]:
         speech_end = speech_end_ms or now_ms()
         pcm, trim_start, trim_end = trim_speech(audio, sample_rate)
+        # 低音量麦克风兜底：峰值过低时归一化放大，避免 ASR 收到近静音
+        if pcm:
+            peak = max(abs(int.from_bytes(pcm[i:i+2], "little", signed=True)) for i in range(0, min(len(pcm), 200000), 2))
+            if 0 < peak < 6000:
+                scale = min(6.0, 16000.0 / peak)
+                arr = np.frombuffer(pcm, dtype="<i2").astype(np.float32) * scale
+                pcm = np.clip(arr, -32768, 32767).astype("<i2").tobytes()
         t_asr = time.perf_counter()
         try:
             result = await self.asr.transcribe(pcm, sample_rate, language=language, partial=False, initial_prompt=book.asr_initial_prompt())
