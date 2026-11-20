@@ -152,6 +152,17 @@ def compose_extractive(query: str, passages: list[dict], lang: str = "zh", curre
     return prefix + answer
 
 
+class _Prewarm:
+    __slots__ = ("messages", "tokens", "done", "task", "first_token_ms")
+
+    def __init__(self, messages: list[dict]) -> None:
+        self.messages = messages
+        self.tokens: list[str] = []
+        self.done = False
+        self.task: Optional[asyncio.Task] = None
+        self.first_token_ms: Optional[float] = None
+
+
 class OpenAICompatLLM(LLMProvider):
     name = "openai-compat"
 
@@ -170,7 +181,52 @@ class OpenAICompatLLM(LLMProvider):
         self.requests = 0
         self.failures = 0
 
+    def prewarm(self, messages: list[dict]) -> _Prewarm:
+        """投机启动：用 ASR 部分文本先发起 LLM 请求，边生成边缓存 token。"""
+        pw = _Prewarm(messages)
+
+        async def run() -> None:
+            import time as _t
+
+            t0 = _t.perf_counter()
+            try:
+                async for token in self._raw_stream(messages):
+                    if pw.first_token_ms is None:
+                        pw.first_token_ms = (_t.perf_counter() - t0) * 1000
+                    pw.tokens.append(token)
+            except Exception as exc:  # noqa: BLE001
+                log.info("LLM prewarm aborted: %s", exc)
+            finally:
+                pw.done = True
+
+        pw.task = asyncio.create_task(run())
+        return pw
+
+    async def _consume_prewarm(self, pw: _Prewarm) -> AsyncIterator[str]:
+        idx = 0
+        while True:
+            while idx < len(pw.tokens):
+                token = pw.tokens[idx]
+                idx += 1
+                yield token
+            if pw.done:
+                break
+            await asyncio.sleep(0.005)
+        if pw.first_token_ms is not None:
+            self.first_token_ms = pw.first_token_ms
+
     async def stream(self, messages: list[dict], context: Optional[dict] = None) -> AsyncIterator[str]:
+        pw = (context or {}).get("_prewarm")
+        if isinstance(pw, _Prewarm) and pw.messages == messages:
+            async for token in self._consume_prewarm(pw):
+                yield token
+            return
+        if isinstance(pw, _Prewarm) and pw.task is not None:
+            pw.task.cancel()
+        async for token in self._raw_stream(messages):
+            yield token
+
+    async def _raw_stream(self, messages: list[dict]) -> AsyncIterator[str]:
         payload = {
             "model": self.settings.llm_model,
             "messages": messages,
@@ -179,7 +235,6 @@ class OpenAICompatLLM(LLMProvider):
             "max_tokens": self.settings.llm_max_tokens,
         }
         if "minimax" in self.settings.llm_base_url:
-            # M3 系列强制 adaptive thinking；关掉可省首 token 延迟（不支持时忽略）
             payload["enable_thinking"] = False
         import time
 
