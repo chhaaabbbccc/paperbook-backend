@@ -605,8 +605,9 @@ async def voice_ws(ws: WebSocket, session_id: str):
                     )
                     turn_task = asyncio.create_task(stream_turn(events))
             elif kind == "barge_in":
-                await reset_session_input()
+                # 先回 ack 再清理，避免客户端等 ack 期间新回合事件被排队延迟
                 await ws.send_json({"type": "barge_in_ack"})
+                await reset_session_input()
             elif kind == "end":
                 break
     except WebSocketDisconnect:

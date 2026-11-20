@@ -233,7 +233,10 @@
     state.turn = null;
     showTranscript();
     stopPlayback();
-    if (send({ type: 'barge_in' })) state.pendingAcks++;
+    if (send({ type: 'barge_in' })) {
+      state.pendingAcks++;
+      setTimeout(() => { state.pendingAcks = 0; }, 600);
+    }
     render();
   }
 
@@ -242,7 +245,8 @@
       state.pendingAcks = Math.max(0, state.pendingAcks - 1);
       return;
     }
-    if (state.pendingAcks) return;
+    // 注意：不能用 pendingAcks 拦掉全部事件——ack 若丢失/迟到会把
+    // asr_final/answer/done 一起吞掉，界面就永远停在“正在准备回复”。
     if (event.type === 'ready') {
       state.ready = true;
       log(`已连接 · ${event.book_id} · 第 ${$('page').value} 页`);
@@ -398,6 +402,16 @@
     if (!state.ready) { render(); return; }
     newTurn(ended, true);
     send({ type: 'vad', event: 'speech_end', t: Math.round(Date.now() - (now() - ended)) });
+    const turnRef = state.turn;
+    setTimeout(() => {
+      if (state.turn === turnRef && !turnRef.answered && !turnRef.text) {
+        finishTranscript('响应超时');
+        state.turn = null;
+        notice('这次没有收到回复，请再问一遍。');
+        log('回合看门狗超时（12s 无 ASR/回答）');
+        render();
+      }
+    }, 12000);
   }
 
   function flushPush() {
