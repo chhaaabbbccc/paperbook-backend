@@ -10,6 +10,7 @@ from typing import Optional
 
 from ..utils import detect_lang, normalize_for_tokens, normalize_text, truncate
 from .aliases import expand_query
+from .characters import KNOWN_PEOPLE
 
 CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 WORD_RE = re.compile(r"[a-z0-9]+")
@@ -277,6 +278,12 @@ class BookIndex:
     def asr_initial_prompt(self, limit: int = 240) -> str:
         """给本地 Whisper 的领域偏置：指令词 + 书名 + 点击对象 + 脚本关键引文。"""
         parts: list[str] = ["高亮", "查找", "播放", "暂停", "继续", "找到", "画面", str(self.book.get("title") or "")]
+        for name in list(KNOWN_PEOPLE) + [
+            str(c.get("name") or "").strip() for c in (self.book.get("characters") or [])
+            if isinstance(c, dict)
+        ]:
+            if name and name not in parts:
+                parts.append(name)
         for element in self.book.get("elements", []):
             name = str(element.get("name") or "").strip()
             if name and name not in parts:

@@ -99,16 +99,28 @@ MiniMax 云端（TTS + ASR）实测：
 
 回答 prompt 要求“1–2 句、中文 ≤45 字”，从源头限制长句。
 
-### 3.3 填充音兜底（关键保险）
+### 3.3 垫话 + 答案校验（关键保险）
 
-`FILLER_DEADLINE_MS=1700`：从**真实说完**起算，1700ms 内还没有任何真音频，就先播预合成的自然垫音：
+人物/关系类问题不再抢 0ms 播抽取式答案，而是：
 
-- 中文：“嗯，我看看。”
-- 英文：“Hmm, let me see.”
+1. **秒回垫话**：warmup 时**每语言只预合成 5 句**（“好的，我看一下。”“让我翻翻这一页。”“我看看是谁。”…），用掉一句后台补一句，始终保持 5 句；运行期首音通常 10–30ms，也避免一次合成 33 句触发 MiniMax TTS 限流。
+2. **后台生成真答案**：严格 prompt + 人物表 + 反串规则生成，先缓冲不播。
+3. **答案校验**：`app/pipeline/answer_guard.py` 检查主语/引号/谁/因果/页码等；不通过就只播澄清或继续拖（“这一页我没看准小满的事，我再看看。”），**绝不播驴头不对马嘴的答案**。
+4. **兜底**：如果垫话库没准备好，仍按 `FILLER_DEADLINE_MS=1700` 播单句垫音；`used_ack` / `used_filler` / `safety_fallback` 都会写进指标。
 
-填充音在 warmup 时用当前 TTS 预合成，运行期零成本；播放后会继续播真实回答。指标里 `used_filler=true`、`filler_ratio` 可监控使用频率。正式答辩时应控制比例（理想 <10%），频繁触发说明 ASR/LLM/TTS 某一环偏慢。
+实测（cn01，`/api/ask`）：
 
-> 填充音是常见的对话系统 backchannel 手法，不是预置答案；但在项目说明书中应如实说明。
+| 问题 | 首音（垫话） | 真答案首音 | 回答 |
+|---|---:|---:|---|
+| 小满为什么难过？ | 26ms | 224ms | 不是小满，是花花不开心，想和小满一起过生日。 |
+| 小满为什么生气？ | 15ms | 182ms | 不是小满，是花花生气。 |
+| 谁收到生日卡片？ | 18ms | 1.50s | 花花收到小满画的生日卡片。 |
+
+垫话是常见的对话系统 backchannel 手法，不是预置答案；项目说明书里应如实写成“先确认、再回答”，不能把垫话算作答案正确率。
+
+> 预合成句数可用 `ACK_PREWARM_LINES=5` 调；`ACK_REFILL=true` 控制“用一句补一句”。MiniMax 限流时会回退 SAPI，音色可能不完全统一；优先保证首音和答案正确。
+
+> 只有人物/关系类问题走“垫话 + 校验”；播放/找画面/查文字仍直接执行，不垫话。普通事实问题仍可走 `FAST_ANSWER` 快路径。
 
 ### 3.4 热词与 VAD
 
@@ -189,8 +201,12 @@ python tools/eval_queries.py --book cn01 --base http://127.0.0.1:8790 --out data
 | --- | --- | --- |
 | `VAD_SILENCE_MS` | 500 | 判停静音；太小会切断自然停顿，太大会增加端点等待 |
 | `VAD_MIN_SPEECH_MS` | 100 | 最短语音，防咳嗽/噪声 |
-| `FILLER_DEADLINE_MS` | 1700 | 首音保险触发点；SAPI 可降到 1400，MiniMax 建议 1700 |
-| `FILLER_ENABLED` | true | 关闭后只剩真音频，抖动时可能超 2s |
+| `FILLER_DEADLINE_MS` | 1700 | 垫话库未就绪时的兜底触发点；正常有 ack 时不触发 |
+| `FILLER_ENABLED` | true | 关闭后不预合成垫话；人物问题会失去首音保险 |
+| `ACK_PREWARM_LINES` | 5 | 每语言预合成句数；用掉一句后台补一句 |
+| `ACK_REFILL` | true | 关闭后只消耗预合成的 5 句，不再补 |
+| `VERIFIED_ANSWERS` | true | 人物/关系类问题先垫话 + 校验答案，校验不过只澄清/拖延 |
+| `ANSWER_VERIFY_TIMEOUT_S` | 6 | 校验路径等待 LLM 完整答案的上限；超时走安全澄清 |
 | `ASR_MODEL` | large-v3 | `large-v3-turbo`/`medium` 更快 |
 | `ASR_PARTIAL_MS` | 0 | >0 开启滚动部分识别（UI 字幕用） |
 | `TTS_PROVIDER` | sapi | `sapi`/`local`/`minimax` |
