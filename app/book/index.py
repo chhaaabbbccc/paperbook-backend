@@ -391,12 +391,15 @@ def route_intent(
 
     # 播放控制
     if re.fullmatch(r"(播放|开始|继续|暂停|停一下|停止|结束播放|play|pause|resume|stop)", qn, re.I):
-        action = "play"
-        if re.search(r"暂停|停|pause|stop", qn, re.I):
+        if re.search(r"结束|停止|stop", qn, re.I):
             action = "pause"
-        elif re.search(r"继续|播放|开始|resume|play", qn, re.I):
+            answer = "好的，结束播放。" if lang == "zh" else "Okay, stopping."
+        elif re.search(r"暂停|pause", qn, re.I):
+            action = "pause"
+            answer = "好的，暂停。" if lang == "zh" else "Okay, paused."
+        else:
             action = "play"
-        answer = {"play": "好的，继续播放。" if lang == "zh" else "Okay, playing.", "pause": "好的，暂停。" if lang == "zh" else "Okay, paused."}[action]
+            answer = "好的，继续播放。" if lang == "zh" else "Okay, playing."
         return {"intent": "playback", "action": {"type": action}, "answer": answer, "lang": lang, "evidence": []}
 
     # 查文字 / 高亮

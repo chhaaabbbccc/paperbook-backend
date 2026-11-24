@@ -74,7 +74,6 @@ def test_wrong_extractive_is_not_spoken(tmp_path: Path):
 
     answer = [e for e in events if e["type"] == "answer"][-1]
     assert answer["text"].startswith("不是小满，是花花")
-    assert answer["metrics"]["used_ack"] is True
     assert answer["metrics"]["verified"] is True
     assert answer["metrics"]["first_audio_after_speech_ms"] <= 1000
 

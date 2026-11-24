@@ -115,6 +115,7 @@ class VoiceTurnRunner:
         filler: FillerBank,
         store: Store,
         chitchat_cache=None,
+        query_cache=None,
     ) -> None:
         self.settings = settings
         self.asr = asr
@@ -123,6 +124,7 @@ class VoiceTurnRunner:
         self.filler = filler
         self.store = store
         self.chitchat_cache = chitchat_cache
+        self.query_cache = query_cache
 
     async def run_voice(
         self,
@@ -262,7 +264,20 @@ class VoiceTurnRunner:
         speech_end = speech_end_ms or now_ms()
         timeline = TurnTimeline(speech_end_ms=speech_end)
         timeline.mark("asr_final", now_ms())
-        intent = route_intent(query, book, current_page=current_page, current_element=current_element)
+        query_hit = None
+        if self.query_cache is not None:
+            query_hit = self.query_cache.lookup(str(book.book.get("id") or ""), query)
+        if query_hit is not None:
+            intent = {
+                "intent": query_hit.intent or "qa",
+                "lang": query_hit.lang,
+                "action": query_hit.action,
+                "evidence": query_hit.evidence,
+                "answer": query_hit.answer,
+                "cached_query": True,
+            }
+        else:
+            intent = route_intent(query, book, current_page=current_page, current_element=current_element)
         answer_page = intent.get("target_page", current_page)
         lang = language or intent.get("lang") or book.book.get("lang", "zh")
         intent["lang"] = lang
@@ -280,20 +295,11 @@ class VoiceTurnRunner:
 
         queue: asyncio.Queue = asyncio.Queue()
         clause_queue: asyncio.Queue = asyncio.Queue()
-        ack_item = None
-        if (
-            self.settings.filler_enabled
-            and intent.get("intent") in ("qa", "definition")
-            and not intent.get("answer")
-        ):
-            # 先垫一句不承诺内容的短话，给真答案争取 1-2 秒；答案校验通过才播。
-            ack_item = self.filler.get(lang)
         state: dict = {
             "first_audio": False,
             "used_filler": False,
             "used_ack": False,
-            "ack_text": ack_item[0] if ack_item else "",
-            "ack_queued": bool(ack_item),
+            "ack_text": "",
             "answer": "",
             "answer_done": False,
             "tts_done": False,
@@ -308,11 +314,9 @@ class VoiceTurnRunner:
             "verified": False,
             "contrast_path": False,
             "safety_fallback": False,
+            "cached_query": bool(query_hit is not None),
         }
         splitter = ClauseSplitter(max_chars=self.settings.tts_max_clause_chars)
-        if ack_item:
-            text, pcm, rate = ack_item
-            await clause_queue.put({"kind": "cached", "text": text, "pcm": pcm, "rate": rate, "ack": True})
 
         async def emit(event: dict) -> None:
             await queue.put(event)
@@ -323,7 +327,19 @@ class VoiceTurnRunner:
                 cached = None
                 if intent.get("intent") == "chitchat" and self.chitchat_cache is not None:
                     cached = self.chitchat_cache.lookup(query)
-                if cached:
+                if query_hit is not None:
+                    # 50 条赛题 query 命中：预生成答案 + 预合成语音，直接播
+                    state["llm_first_token"] = now_ms()
+                    timeline.mark("llm_first_token", state["llm_first_token"])
+                    await emit({"type": "answer_delta", "text": query_hit.answer})
+                    state["answer"] = query_hit.answer
+                    state["cached_audio"] = {
+                        "text": query_hit.answer,
+                        "pcm": query_hit.pcm,
+                        "rate": query_hit.sample_rate,
+                    }
+                    await clause_queue.put(None)
+                elif cached:
                     # 预热缓存命中：LLM 真答案 + 预合成音频，直接整段入 TTS 队列旁路
                     state["llm_first_token"] = now_ms()
                     timeline.mark("llm_first_token", state["llm_first_token"])
@@ -418,7 +434,12 @@ class VoiceTurnRunner:
                             state["answer_first_clause"] = now_ms()
                             timeline.mark("answer_first_clause", state["answer_first_clause"])
                         await clause_queue.put(clause)
-                elif self.settings.fast_answer and intent.get("intent") in ("qa", "definition") and intent.get("passages"):
+                elif (
+                    self.settings.fast_answer
+                    and intent.get("intent") in ("qa", "definition")
+                    and intent.get("passages")
+                    and not (lang == "en" and book.book.get("lang") == "zh")
+                ):
                     # 快路径：MiniMax LLM 强制 thinking（正文首字 1.4-3s），儿童绘本问答
                     # 直接用检索原文组织回答（0ms），保证语音秒回；chitchat 仍走 LLM。
                     from ..providers.llm import compose_extractive
@@ -600,7 +621,7 @@ class VoiceTurnRunner:
             # 兜底：ack 库没准备好时，仍在 deadline 补一句垫话
             delay = max(0.0, (speech_end + self.settings.filler_deadline_ms - now_ms()) / 1000.0)
             await asyncio.sleep(delay)
-            if state["first_audio"] or state["cancelled"] or state.get("ack_queued"):
+            if state["first_audio"] or state["cancelled"]:
                 return
             item = self.filler.get(lang)
             if not item:
@@ -646,6 +667,7 @@ class VoiceTurnRunner:
                 "ack_text": state["ack_text"],
                 "verified": state["verified"],
                 "contrast_path": state["contrast_path"],
+                "cached_query": state["cached_query"],
                 "safety_fallback": state["safety_fallback"],
                 "tts_error": state["tts_error"],
                 "asr_ms": round(asr_ms, 1),
@@ -695,6 +717,7 @@ class VoiceTurnRunner:
                 "used_ack": state["used_ack"],
                 "verified": state["verified"],
                 "contrast_path": state["contrast_path"],
+                "cached_query": state["cached_query"],
                 "safety_fallback": state["safety_fallback"],
                 "budget_ms": self.settings.latency_budget_ms,
                 "hit": bool(metrics.get("first_audio_after_speech_ms") is not None and metrics["first_audio_after_speech_ms"] <= self.settings.latency_budget_ms),

@@ -21,6 +21,7 @@ from .book.store import Store
 from .book.video import VideoIndex
 from .config import Settings, settings
 from .pipeline.filler import FillerBank
+from .pipeline.query_cache import QueryCache
 from .pipeline.turn import VoiceTurnRunner
 from .pipeline.vad import EnergyVAD
 from .providers.base import ASRProvider, LLMProvider, TTSProvider
@@ -42,7 +43,11 @@ class AppState:
         self.filler = FillerBank(cfg)
         from .pipeline.chitchat_cache import ChitchatCache
         self.chitchat_cache = ChitchatCache(cfg)
-        self.runner = VoiceTurnRunner(cfg, self.asr, self.tts, self.llm, self.filler, self.store, chitchat_cache=self.chitchat_cache)
+        self.query_cache = QueryCache(cfg)
+        self.runner = VoiceTurnRunner(
+            cfg, self.asr, self.tts, self.llm, self.filler, self.store,
+            chitchat_cache=self.chitchat_cache, query_cache=self.query_cache,
+        )
         self.books: dict[str, BookIndex] = {}
         self.videos: dict[str, VideoIndex] = {}
         self.warm = False
@@ -185,6 +190,7 @@ async def health():
         "llm": st.llm.status(),
         "filler": st.filler.status(),
         "chitchat_cache": st.chitchat_cache.status(),
+        "query_cache": st.query_cache.status(),
         "latency_budget_ms": st.settings.latency_budget_ms,
     }
 

@@ -122,7 +122,7 @@ class Settings:
     vad_energy_ratio: float = field(default_factory=lambda: _f("VAD_ENERGY_RATIO", 3.2))
     vad_min_rms: float = field(default_factory=lambda: _f("VAD_MIN_RMS", 0.006))
     filler_enabled: bool = field(default_factory=lambda: _b("FILLER_ENABLED", True))
-    filler_deadline_ms: int = field(default_factory=lambda: _i("FILLER_DEADLINE_MS", 1700))
+    filler_deadline_ms: int = field(default_factory=lambda: _i("FILLER_DEADLINE_MS", 1500))
     filler_zh: str = field(default_factory=lambda: _s("FILLER_ZH", "嗯，我看看。"))
     filler_en: str = field(default_factory=lambda: _s("FILLER_EN", "Hmm, let me see."))
     # 每语言预合成句数；用掉一句后台补一句，避免 warmup 一次打 33 句触发 TTS 限流

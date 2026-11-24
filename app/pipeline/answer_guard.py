@@ -9,6 +9,7 @@ from ..book.characters import has_contrast, is_who_question, names_in, only_in_q
 
 _WHY_RE = re.compile(r"为什么|为何|怎么会|why|how come", re.I)
 _WHERE_RE = re.compile(r"哪里|在哪|哪儿|where", re.I)
+_PRONOUN_RE = re.compile(r"它(?!们)|他(?!们)|她(?!们)|这个|这张|这句|这只|那|(?<![a-z])(it|he|she|they|this|that|these|those)(?![a-z])", re.I)
 _COLOR_RE = re.compile(r"什么颜色|什么色|颜色|colour|color", re.I)
 _COUNT_RE = re.compile(r"几个|多少|几块|几岁|how many", re.I)
 _CAUSE = ("因为", "所以", "于是", "都怪", "结果", "想", "要", "没写", "没说明", "没有说明", "没有说", "没有明说", "明说", "只写", "写的是", "because", "so ", "since", "that's why")
@@ -69,11 +70,13 @@ def contrast_answer(query: str, passages: Optional[list[dict]]) -> str | None:
 
 
 def needs_verification(query: str, intent: Optional[dict] = None) -> bool:
-    """人物/关系/情绪类问题必须校验；普通事实问答可以继续走快路径。"""
+    """人物/关系/情绪/指代类问题必须校验；普通事实问答可以继续走快路径。"""
     q = query or ""
     if names_in(q):
         return True
     if is_who_question(q):
+        return True
+    if _PRONOUN_RE.search(q):
         return True
     if any(w in q for w in ("难过", "伤心", "生气", "开心", "高兴", "哭", "笑", "害怕", "吵架", "和好", "道歉", "送", "收到", "喜欢", "讨厌")):
         return True
